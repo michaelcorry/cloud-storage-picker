@@ -26,7 +26,8 @@
   "exports": {
     ".": "./dist/index.js",
     "./dropbox": "./dist/providers/dropbox.js",
-    "./google-drive": "./dist/providers/google-drive.js"
+    "./google-drive": "./dist/providers/google-drive.js",
+    "./one-drive": "./dist/providers/one-drive.js"
   },
   "types": "./dist/index.d.ts",
   "scripts": {
