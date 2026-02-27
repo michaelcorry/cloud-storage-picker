@@ -5,6 +5,7 @@ export default defineConfig({
     index: "src/index.ts",
     "providers/dropbox": "src/providers/dropbox/index.ts",
     "providers/google-drive": "src/providers/google-drive/index.ts",
+    "providers/one-drive": "src/providers/one-drive/index.ts",
   },
   format: ["esm"],
   dts: true,

@@ -14,7 +14,7 @@ A lightweight, TypeScript-first library for integrating file pickers from popula
 
 - ✅ Dropbox
 - ✅ Google Drive
-- 🔜 OneDrive (coming soon)
+- ✅ OneDrive (Individual + Organization)
 
 ## Installation
 
@@ -74,6 +74,25 @@ const files = await picker.open({
 
 console.log(files);
 // [{ id: '...', name: 'presentation.pptx', link: 'https://...', rawData: {...} }]
+```
+
+
+### OneDrive
+
+```typescript
+import { createPicker } from "cloud-storage-picker";
+import { oneDriveProvider } from "cloud-storage-picker/one-drive";
+
+const picker = createPicker({
+  provider: oneDriveProvider({
+    clientId: "your-microsoft-app-client-id",
+    accountType: "individual", // or "organization"
+  }),
+});
+
+const files = await picker.open({
+  multiSelect: true,
+});
 ```
 
 ## API Reference
@@ -202,6 +221,45 @@ const picker = createPicker({
 
 const files = await picker.open();
 ```
+
+
+### OneDrive Provider
+
+#### Configuration
+
+```typescript
+oneDriveProvider(config: OneDriveConfig, options?: OneDriveOptions)
+```
+
+**OneDriveConfig:**
+
+- `clientId` (required): Your Microsoft app registration client ID
+- `accountType`: `"individual" | "organization"` (default: `"individual"`)
+- `redirectUri`: Redirect URI for organization OAuth popup (default: `window.location.origin`)
+- `tenant`: Tenant name/id for organization login (default: `"organizations"`)
+
+**OneDriveOptions:**
+
+- `multiSelect`: `boolean` - Enable multiple file selection
+- `maxItems`: `number` - Maximum number of selected files
+
+**OneDriveFileData:**
+
+```typescript
+interface OneDriveFileData {
+  id: string;
+  name: string;
+  downloadUrl?: string;
+  webUrl?: string;
+  mimeType?: string;
+  size?: number;
+}
+```
+
+#### Account Types
+
+- `individual`: Uses the official OneDrive JavaScript picker SDK (`js.live.net/v7.2/OneDrive.js`).
+- `organization`: Authenticates with Microsoft identity platform and loads files from Microsoft Graph (`/me/drive/root/children`).
 
 ## Advanced Usage
 
