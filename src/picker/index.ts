@@ -1,5 +1,13 @@
 import type { FileData, StorageProvider } from "./types";
 
+export {
+  isCancelledError,
+  isPickerError,
+  PickerError,
+  type PickerErrorCode,
+} from "./errors";
+export type { FileData, StorageProvider } from "./types";
+
 interface PickerParams<Options, RawFileData> {
   provider: StorageProvider<Options, RawFileData>;
 }

@@ -1,21 +1,54 @@
+import { PickerError } from "@/picker/errors";
 import type { FileData, StorageProvider } from "@/picker/types";
+import { assertBrowser, loadScript, requireConfig } from "@/picker/utils";
 
 export interface GoogleDriveConfig {
   /**
-   * OAuth 2.0 Client ID for Google Drive API.
+   * Required. OAuth 2.0 Client ID for Google Drive API.
    */
   clientId: string;
   /**
-   * API Key for Google Drive API.
+   * Required. API Key for Google Drive API.
    */
   apiKey: string;
+  /**
+   * Optional. The Google Cloud project number. Required when using the
+   * `drive.file` scope so picked files are shared with your app.
+   */
+  appId?: string;
+  /**
+   * Optional. OAuth scopes to request. Defaults to
+   * `["https://www.googleapis.com/auth/drive.readonly"]`.
+   */
+  scopes?: string[];
 }
 
 export interface GoogleDriveOptions {
   /**
-   * Sets the maximum number of items a user can pick.
+   * Optional. Sets the maximum number of items a user can pick.
    */
   maxItems?: number;
+  /**
+   * Optional. A value of false (default) limits selection to a single file,
+   * while true enables multiple file selection.
+   */
+  multiSelect?: boolean;
+  /**
+   * Optional. A list of MIME types (e.g. ["application/pdf", "image/png"]).
+   * If specified, the user will only be able to select files with these
+   * MIME types.
+   */
+  mimeTypes?: string[];
+  /**
+   * Optional. A value of false (default) hides folders, while true shows
+   * folders in the picker so the user can navigate into them.
+   */
+  includeFolders?: boolean;
+  /**
+   * Optional. ISO 639 language code (e.g. "en", "fr", "de") used to localize
+   * the picker UI. Defaults to the user's preferred language.
+   */
+  locale?: string;
 }
 
 export interface GoogleDriveFileData {
@@ -35,6 +68,22 @@ export interface GoogleDriveFileData {
    * The URL of the file.
    */
   url: string;
+  /**
+   * Size of the file in bytes, when available.
+   */
+  sizeBytes?: number;
+  /**
+   * A URL to an icon for the file, when available.
+   */
+  iconUrl?: string;
+  /**
+   * A user-contributed description of the file, when available.
+   */
+  description?: string;
+  /**
+   * Timestamp (ms since epoch) of the last edit, when available.
+   */
+  lastEditedUtc?: number;
 }
 
 export type GoogleDriveProvider = (
@@ -42,12 +91,66 @@ export type GoogleDriveProvider = (
   options?: GoogleDriveOptions,
 ) => StorageProvider<GoogleDriveOptions, GoogleDriveFileData>;
 
+const DEFAULT_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"];
+
+/**
+ * Milliseconds subtracted from a token's lifetime so a token that is about
+ * to expire is refreshed instead of being handed to the picker.
+ */
+const TOKEN_EXPIRY_BUFFER_MS = 60_000;
+
+interface CachedToken {
+  accessToken: string;
+  expiresAt: number;
+}
+
+/**
+ * Creates a Google Drive storage provider that opens the Google Picker.
+ *
+ * Access tokens are cached per provider instance and reused until they are
+ * about to expire, so repeated `open()` calls do not re-prompt the user.
+ *
+ * @param config - Required Google API configuration.
+ * @param [options] - Default picker options applied to every `open()` call.
+ * @returns A `StorageProvider` that resolves to selected Google Drive files.
+ * @throws {PickerError} `invalid_config` when `clientId` or `apiKey` is missing.
+ *
+ * @example
+ * const googleDrive = googleDriveProvider({
+ *   clientId: "your-client-id.apps.googleusercontent.com",
+ *   apiKey: "your-api-key",
+ * });
+ *
+ * const files = await googleDrive.open({ multiSelect: true });
+ */
 export const googleDriveProvider: GoogleDriveProvider = (config, options) => {
+  const clientId = requireConfig(
+    config?.clientId,
+    "clientId",
+    "googleDriveProvider",
+  );
+  const apiKey = requireConfig(config?.apiKey, "apiKey", "googleDriveProvider");
+  const scopes = config.scopes?.length ? config.scopes : DEFAULT_SCOPES;
+
+  let cachedToken: CachedToken | undefined;
+
+  const getToken = async (): Promise<string> => {
+    if (cachedToken && cachedToken.expiresAt > Date.now()) {
+      return cachedToken.accessToken;
+    }
+
+    cachedToken = await requestAccessToken(clientId, scopes);
+
+    return cachedToken.accessToken;
+  };
+
   return {
     open: async (opts = {}) => {
+      assertBrowser("The Google Drive picker");
+
       await loadGoogleApis();
 
-      const token = await getAccessToken(config.clientId);
+      const token = await getToken();
 
       const finalOptions = { ...options, ...opts };
 
@@ -56,37 +159,63 @@ export const googleDriveProvider: GoogleDriveProvider = (config, options) => {
           const action = data[google.picker.Response.ACTION];
 
           if (action === google.picker.Action.PICKED) {
-            const files = data[google.picker.Response.DOCUMENTS]?.map((doc) => {
-              return {
-                id: doc[google.picker.Document.ID],
-                name: doc[google.picker.Document.NAME]!,
-                link: doc[google.picker.Document.URL]!,
-                rawData: {
-                  id: doc[google.picker.Document.ID],
-                  name: doc[google.picker.Document.NAME]!,
-                  mimeType: doc[google.picker.Document.MIME_TYPE]!,
-                  url: doc[google.picker.Document.URL]!,
-                },
-              };
-            });
+            const files = data[google.picker.Response.DOCUMENTS]?.map((doc) =>
+              mapDocument(doc),
+            );
 
             return resolve(files ?? []);
           }
 
           if (action === google.picker.Action.CANCEL) {
-            return reject(new Error("User cancelled Google Drive picker"));
+            return reject(
+              new PickerError(
+                "cancelled",
+                "User cancelled Google Drive picker",
+              ),
+            );
           }
 
           if (action === google.picker.Action.ERROR) {
-            return reject(new Error("Error occurred in Google Drive picker"));
+            return reject(
+              new PickerError(
+                "picker_failed",
+                "Error occurred in Google Drive picker",
+              ),
+            );
           }
         };
 
+        const view = new window.google.picker.DocsView(
+          window.google.picker.ViewId.DOCS,
+        );
+
+        if (finalOptions.mimeTypes?.length) {
+          view.setMimeTypes(finalOptions.mimeTypes.join(","));
+        }
+
+        if (finalOptions.includeFolders) {
+          view.setIncludeFolders(true);
+        }
+
         const picker = new window.google.picker.PickerBuilder()
-          .addView(window.google.picker.ViewId.DOCS)
+          .addView(view)
           .setOAuthToken(token)
-          .setDeveloperKey(config.apiKey)
+          .setDeveloperKey(apiKey)
           .setCallback(pickerCallback);
+
+        if (config.appId) {
+          picker.setAppId(config.appId);
+        }
+
+        if (finalOptions.locale) {
+          picker.setLocale(finalOptions.locale as google.picker.Locales);
+        }
+
+        if (finalOptions.multiSelect) {
+          picker.enableFeature(
+            window.google.picker.Feature.MULTISELECT_ENABLED,
+          );
+        }
 
         if (finalOptions.maxItems) {
           picker.setMaxItems(finalOptions.maxItems);
@@ -98,16 +227,82 @@ export const googleDriveProvider: GoogleDriveProvider = (config, options) => {
   };
 };
 
-function getAccessToken(clientId: string): Promise<string> {
+function mapDocument(
+  doc: google.picker.DocumentObject,
+): FileData<GoogleDriveFileData> {
+  const rawData: GoogleDriveFileData = {
+    id: doc[google.picker.Document.ID],
+    name: doc[google.picker.Document.NAME] ?? "",
+    mimeType: doc[google.picker.Document.MIME_TYPE] ?? "",
+    url: doc[google.picker.Document.URL] ?? "",
+    sizeBytes: doc.sizeBytes,
+    iconUrl: doc[google.picker.Document.ICON_URL],
+    description: doc[google.picker.Document.DESCRIPTION],
+    lastEditedUtc: doc[google.picker.Document.LAST_EDITED_UTC],
+  };
+
+  return {
+    id: rawData.id,
+    name: rawData.name,
+    link: rawData.url,
+    rawData,
+  };
+}
+
+function requestAccessToken(
+  clientId: string,
+  scopes: string[],
+): Promise<CachedToken> {
   return new Promise((resolve, reject) => {
     const tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: clientId,
-      scope: "https://www.googleapis.com/auth/drive.readonly",
-      callback: (response: any) => {
+      scope: scopes.join(" "),
+      callback: (response) => {
         if (response.access_token) {
-          resolve(response.access_token);
+          const expiresInSeconds = Number(response.expires_in) || 3600;
+
+          resolve({
+            accessToken: response.access_token,
+            expiresAt:
+              Date.now() + expiresInSeconds * 1000 - TOKEN_EXPIRY_BUFFER_MS,
+          });
+        } else if (response.error === "access_denied") {
+          reject(
+            new PickerError(
+              "cancelled",
+              "User declined Google Drive authorization",
+            ),
+          );
         } else {
-          reject(new Error("Failed to get access token"));
+          reject(
+            new PickerError(
+              "auth_failed",
+              response.error_description ||
+                response.error ||
+                "Failed to get Google access token",
+            ),
+          );
+        }
+      },
+      error_callback: (error) => {
+        if (error.type === "popup_closed") {
+          reject(
+            new PickerError("cancelled", "User closed Google sign-in popup"),
+          );
+        } else if (error.type === "popup_failed_to_open") {
+          reject(
+            new PickerError(
+              "popup_blocked",
+              "Google sign-in popup was blocked. Open the picker from a " +
+                "user gesture (e.g. a click handler) and allow popups.",
+            ),
+          );
+        } else {
+          reject(
+            new PickerError("auth_failed", error.message || "Sign-in failed", {
+              cause: error,
+            }),
+          );
         }
       },
     });
@@ -116,24 +311,33 @@ function getAccessToken(clientId: string): Promise<string> {
   });
 }
 
-async function loadGoogleApis(): Promise<void> {
-  if (window.gapi && window.google) return;
+let googleApisPromise: Promise<void> | undefined;
 
-  await loadScript("https://apis.google.com/js/api.js");
-  await loadScript("https://accounts.google.com/gsi/client");
+function loadGoogleApis(): Promise<void> {
+  // Both the picker and the identity services may already be on the page
+  // (loaded by the host app or a previous call).
+  if (window.google?.picker && window.google?.accounts?.oauth2) {
+    return Promise.resolve();
+  }
 
-  await new Promise<void>((resolve) => {
-    window.gapi.load("client:picker", resolve);
-  });
-}
+  googleApisPromise ??= (async () => {
+    await Promise.all([
+      loadScript("https://apis.google.com/js/api.js"),
+      loadScript("https://accounts.google.com/gsi/client"),
+    ]);
 
-function loadScript(src: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = src;
-    script.async = true;
-    script.onload = () => resolve();
-    script.onerror = reject;
-    document.head.appendChild(script);
-  });
+    await new Promise<void>((resolve, reject) => {
+      window.gapi.load("client:picker", {
+        callback: resolve,
+        onerror: () =>
+          reject(
+            new PickerError("load_failed", "Failed to load Google Picker API"),
+          ),
+      });
+    });
+  })();
+
+  googleApisPromise.catch(() => (googleApisPromise = undefined));
+
+  return googleApisPromise;
 }

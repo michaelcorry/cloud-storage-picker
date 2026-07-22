@@ -1,4 +1,6 @@
+import { PickerError } from "@/picker/errors";
 import type { FileData, StorageProvider } from "@/picker/types";
+import { assertBrowser, loadScript, requireConfig } from "@/picker/utils";
 
 export interface DropboxConfig {
   /**
@@ -34,7 +36,7 @@ export interface DropboxOptions {
    * Optional. A value of false (default) limits selection to files, while true
    * allows the user to select both folders and files.
    *
-   * You cannot specify `linkType: "direct"` when using `folderselect: true`.
+   * You cannot specify `linkType: "direct"` when using `folderSelect: true`.
    */
   folderSelect?: boolean;
   /**
@@ -91,12 +93,15 @@ export type DropboxProvider = (
   options?: DropboxOptions,
 ) => StorageProvider<DropboxOptions, DropboxFileData>;
 
+const DROPBOX_SCRIPT_URL = "https://www.dropbox.com/static/api/2/dropins.js";
+
 /**
  * Creates a Dropbox storage provider that opens the Dropbox Chooser.
  *
  * @param config - Required Dropbox app configuration.
  * @param [options] - Default chooser options applied to every `open()` call.
  * @returns A `StorageProvider` that resolves to selected Dropbox files.
+ * @throws {PickerError} `invalid_config` when `appKey` is missing.
  *
  * @example
  * const dropbox = dropboxProvider({ appKey: "your-app-key" });
@@ -104,18 +109,45 @@ export type DropboxProvider = (
  * const files = await dropbox.open({ multiSelect: true });
  */
 export const dropboxProvider: DropboxProvider = (config, options) => {
+  const appKey = requireConfig(config?.appKey, "appKey", "dropboxProvider");
+
   return {
     open: async (opts = {}) => {
-      await loadDropboxScript(config.appKey);
+      assertBrowser("The Dropbox chooser");
 
       const finalOptions = { ...options, ...opts };
 
+      if (finalOptions.folderSelect && finalOptions.linkType === "direct") {
+        throw new PickerError(
+          "invalid_config",
+          'dropboxProvider: `linkType: "direct"` cannot be combined with ' +
+            "`folderSelect: true`. Dropbox does not provide direct links for folders.",
+        );
+      }
+
+      await loadDropboxScript(appKey);
+
       return new Promise<FileData<DropboxFileData>[]>((resolve, reject) => {
-        if (!window.Dropbox) {
-          return reject(new Error("Dropbox SDK not loaded"));
+        const dropbox = window.Dropbox as
+          | (Dropbox.Chooser & { isBrowserSupported?: () => boolean })
+          | undefined;
+
+        if (!dropbox) {
+          return reject(
+            new PickerError("load_failed", "Dropbox SDK not loaded"),
+          );
         }
 
-        window.Dropbox.choose({
+        if (dropbox.isBrowserSupported && !dropbox.isBrowserSupported()) {
+          return reject(
+            new PickerError(
+              "unsupported_environment",
+              "The Dropbox chooser does not support this browser.",
+            ),
+          );
+        }
+
+        dropbox.choose({
           linkType: finalOptions.linkType,
           multiselect: finalOptions.multiSelect,
           extensions: finalOptions.extensions,
@@ -133,7 +165,10 @@ export const dropboxProvider: DropboxProvider = (config, options) => {
 
             resolve(mappedFiles);
           },
-          cancel: () => reject(new Error("User cancelled Dropbox chooser")),
+          cancel: () =>
+            reject(
+              new PickerError("cancelled", "User cancelled Dropbox chooser"),
+            ),
         });
       });
     },
@@ -143,13 +178,8 @@ export const dropboxProvider: DropboxProvider = (config, options) => {
 function loadDropboxScript(appKey: string): Promise<void> {
   if (window.Dropbox) return Promise.resolve();
 
-  return new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = "https://www.dropbox.com/static/api/2/dropins.js";
+  return loadScript(DROPBOX_SCRIPT_URL, (script) => {
     script.id = "dropboxjs";
     script.dataset.appKey = appKey;
-    script.onload = () => resolve();
-    script.onerror = reject;
-    document.head.appendChild(script);
   });
 }

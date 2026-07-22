@@ -4,7 +4,9 @@
   "description": "Pick files from a cloud storage provider such as Dropbox, Google Drive and more.",
   "keywords": [
     "dropbox-chooser",
-    "google-drive-picker"
+    "google-drive-picker",
+    "onedrive-picker",
+    "sharepoint-picker"
   ],
   "homepage": "https://github.com/melvinotieno/cloud-storage-picker",
   "bugs": "https://github.com/melvinotieno/cloud-storage-picker/issues",
@@ -20,26 +22,50 @@
   },
   "packageManager": "pnpm@10.28.1",
   "type": "module",
+  "sideEffects": false,
   "files": [
     "dist"
   ],
   "exports": {
-    ".": "./dist/index.js",
-    "./dropbox": "./dist/providers/dropbox.js",
-    "./google-drive": "./dist/providers/google-drive.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./dropbox": {
+      "types": "./dist/providers/dropbox.d.ts",
+      "default": "./dist/providers/dropbox.js"
+    },
+    "./google-drive": {
+      "types": "./dist/providers/google-drive.d.ts",
+      "default": "./dist/providers/google-drive.js"
+    },
+    "./onedrive": {
+      "types": "./dist/providers/onedrive.d.ts",
+      "default": "./dist/providers/onedrive.js"
+    },
+    "./sharepoint": {
+      "types": "./dist/providers/sharepoint.d.ts",
+      "default": "./dist/providers/sharepoint.js"
+    },
+    "./package.json": "./package.json"
   },
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsup",
-    "dev": "tsup --watch --onSuccess \"http-server\""
+    "dev": "tsup --watch --onSuccess \"http-server\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/dropbox-chooser": "^1.0.8",
     "@types/gapi": "^0.0.47",
     "@types/google.accounts": "^0.0.18",
     "@types/google.picker": "^0.0.52",
+    "happy-dom": "^20.11.0",
     "http-server": "^14.1.1",
     "tsup": "^8.5.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
   }
 }

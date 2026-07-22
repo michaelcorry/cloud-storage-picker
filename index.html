@@ -11,6 +11,8 @@
       <div class="button-group">
         <button id="dropbox">Dropbox</button>
         <button id="google-drive">Google Drive</button>
+        <button id="onedrive">OneDrive</button>
+        <button id="sharepoint">SharePoint</button>
       </div>
 
       <div class="divider"></div>
@@ -19,9 +21,11 @@
     </div>
 
     <script type="module">
-      import { createPicker } from "./dist/index.js";
+      import { createPicker, isCancelledError } from "./dist/index.js";
       import { dropboxProvider } from "./dist/providers/dropbox.js";
       import { googleDriveProvider } from "./dist/providers/google-drive.js";
+      import { oneDriveProvider } from "./dist/providers/onedrive.js";
+      import { sharePointProvider } from "./dist/providers/sharepoint.js";
 
       const resultDiv = document.querySelector(".result");
 
@@ -29,30 +33,57 @@
         resultDiv.textContent = JSON.stringify(files, null, 2);
       };
 
-      const onDropboxChooser = async () => {
-        const picker = createPicker({
-          provider: dropboxProvider({
-            appKey: "YOUR_DROPBOX_APP_KEY",
-          }),
-        });
+      const openPicker = async (picker) => {
+        try {
+          const files = await picker.open();
+          updateResult(files);
+        } catch (error) {
+          if (isCancelledError(error)) {
+            resultDiv.textContent = "Picker cancelled.";
+            return;
+          }
 
-        const files = await picker.open();
-
-        updateResult(files);
+          resultDiv.textContent = `Error (${error.code ?? "unknown"}): ${error.message}`;
+        }
       };
 
-      const onGoogleDrivePicker = async () => {
-        const picker = createPicker({
-          provider: googleDriveProvider({
-            clientId: "YOUR_GOOGLE_CLIENT_ID",
-            apiKey: "YOUR_GOOGLE_API_KEY",
+      const onDropboxChooser = () =>
+        openPicker(
+          createPicker({
+            provider: dropboxProvider({
+              appKey: "YOUR_DROPBOX_APP_KEY",
+            }),
           }),
-        });
+        );
 
-        const files = await picker.open();
+      const onGoogleDrivePicker = () =>
+        openPicker(
+          createPicker({
+            provider: googleDriveProvider({
+              clientId: "YOUR_GOOGLE_CLIENT_ID",
+              apiKey: "YOUR_GOOGLE_API_KEY",
+            }),
+          }),
+        );
 
-        updateResult(files);
-      };
+      const onOneDrivePicker = () =>
+        openPicker(
+          createPicker({
+            provider: oneDriveProvider({
+              clientId: "YOUR_AZURE_CLIENT_ID",
+            }),
+          }),
+        );
+
+      const onSharePointPicker = () =>
+        openPicker(
+          createPicker({
+            provider: sharePointProvider({
+              clientId: "YOUR_AZURE_CLIENT_ID",
+              baseUrl: "https://YOUR_TENANT.sharepoint.com",
+            }),
+          }),
+        );
 
       document
         .querySelector("#dropbox")
@@ -61,6 +92,14 @@
       document
         .querySelector("#google-drive")
         .addEventListener("click", onGoogleDrivePicker);
+
+      document
+        .querySelector("#onedrive")
+        .addEventListener("click", onOneDrivePicker);
+
+      document
+        .querySelector("#sharepoint")
+        .addEventListener("click", onSharePointPicker);
     </script>
   </body>
 </html>
